@@ -373,7 +373,7 @@ function startScan() {
           var tr = document.createElement('tr');
           var emailDomain = c.email && c.email.includes('@') ? c.email.split('@')[1] : '';
           var freeEmails = ['gmail.com','yahoo.com','hotmail.com','outlook.com','icloud.com','protonmail.com'];
-          var logoHtml = (emailDomain && !freeEmails.includes(emailDomain)) ? '<img src="https://logos.context.dev?domain=' + emailDomain + '" style="width:16px;height:16px;border-radius:3px;vertical-align:middle;margin-right:5px;"> ' : '';
+          var logoHtml = (emailDomain && !freeEmails.includes(emailDomain)) ? '<img src="https://logos.context.dev?domain=' + emailDomain + '" style="width:16px;height:16px;border-radius:3px;vertical-align:middle;margin-right:5px;" onerror="this.style.display=\'none\'"> ' : '';
           var emailCell = c.email ? logoHtml + '<a href="mailto:' + c.email + '" style="color:#58a6ff">' + c.email + '</a>' : '<span style="color:#484f58">none</span>';
           var companyRow = c.company ? '<br><small style="color:#8b949e">' + c.company + '</small>' : '';
           tr.innerHTML =
