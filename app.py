@@ -402,6 +402,6 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     print(f"\n🛡️  GitHub Radar")
     print(f"   http://localhost:{port}")
-    print(f"   Browserbase: {'✅' if os.environ.get('BROWSERBASE_API_KEY') else '❌'}")
+    print(f"   GitHub Token: {'✅' if os.environ.get('GITHUB_TOKEN') else '❌'}")
     print(f"   OpenAI: {'✅' if os.environ.get('OPENAI_API_KEY') else '❌'}")
     app.run(host="0.0.0.0", port=port, debug=True)

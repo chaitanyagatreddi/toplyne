@@ -25,15 +25,14 @@ import urllib.error
 from dataclasses import dataclass, field
 from typing import Optional
 
-from browserbase import Browserbase
-from playwright.async_api import async_playwright
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 import openai
 
 # ── Config ────────────────────────────────────────────────────────
 
-BB_API_KEY     = os.environ.get("BROWSERBASE_API_KEY", "")
-BB_PROJECT_ID  = os.environ.get("BROWSERBASE_PROJECT_ID") or os.environ.get("BROWSERBASE_PROJECTID", "")
+GITHUB_TOKEN   = os.environ.get("GITHUB_TOKEN", "")
 OPENAI_KEY     = os.environ.get("OPENAI_API_KEY", "")
+SE_APP_KEY     = os.environ.get("SE_APP_KEY", "")   # optional — raises limit to 10k/day
 
 # ── Data structures ───────────────────────────────────────────────
 
@@ -67,40 +66,17 @@ class Contributor:
 # ── Browser Scanner ───────────────────────────────────────────────
 
 class GitHubBrowserScanner:
-    """Browserbase + Playwright scanner targeting GitHub pages."""
+    """Crawl4AI scanner targeting GitHub pages."""
 
     def __init__(self):
-        self.bb = Browserbase(api_key=BB_API_KEY)
-        self.session = None
-        self.browser = None
-        self.context = None
-        self.page = None
-        self.pw = None
+        self.crawler = None
+        self._browser_cfg = BrowserConfig(headless=True, verbose=False)
+        self._run_cfg = CrawlerRunConfig(page_timeout=20000)
 
     async def start(self):
-        print("  🌐 Starting Browserbase session...")
-        self.session = self.bb.sessions.create(project_id=BB_PROJECT_ID)
-        print(f"  ✅ Session: {self.session.id}")
-
-        debug = self.bb.sessions.debug(self.session.id)
-        connect_url = debug.ws_url
-
-        self.pw = await async_playwright().__aenter__()
-        self.browser = await self.pw.chromium.connect_over_cdp(connect_url)
-        self.context = (
-            self.browser.contexts[0]
-            if self.browser.contexts
-            else await self.browser.new_context()
-        )
-        self.page = (
-            self.context.pages[0]
-            if self.context.pages
-            else await self.context.new_page()
-        )
-        # Set a realistic user agent
-        await self.page.set_extra_http_headers({
-            "Accept-Language": "en-US,en;q=0.9",
-        })
+        print("  🌐 Starting Crawl4AI session...")
+        self.crawler = AsyncWebCrawler(config=self._browser_cfg)
+        await self.crawler.__aenter__()
         print("  ✅ Browser connected")
         return self
 
@@ -117,63 +93,25 @@ class GitHubBrowserScanner:
         )
         print(f"  🔍 Searching GitHub: {keyword}")
         repos = []
+        seen = set()
 
         try:
-            await self.page.goto(url, timeout=20000)
-            await self.page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(4)
-
-            seen = set()
-
-            # Strategy 1: GitHub's current search result layout
-            # Each result has an <h3> with a link like /owner/repo
-            result_links = await self.page.query_selector_all(
-                "div[data-testid='results-list'] a[href*='/'], "
-                ".search-result-item a[href], "
-                "ul.repo-list li a[href]"
+            result = await self.crawler.arun(url=url, config=self._run_cfg)
+            raw = re.findall(
+                r'href="(/([a-zA-Z0-9][a-zA-Z0-9\-]{0,38})/([a-zA-Z0-9][a-zA-Z0-9\-\.\_]{0,99}))"',
+                result.html or ""
             )
-            for link in result_links:
-                href = (await link.get_attribute("href") or "").strip()
-                # Reject anything with query strings, fragments, or encoded chars
-                if "?" in href or "#" in href or "%" in href:
+            for href, owner, repo_name in raw:
+                if owner in self.SKIP_OWNERS:
                     continue
-                parts = href.strip("/").split("/")
-                if (len(parts) == 2
-                        and parts[0] not in self.SKIP_OWNERS
-                        and parts[1]
-                        and "." not in parts[0]
-                        and not parts[1].startswith(".")
-                        and re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]{0,38}$', parts[0])
-                        and re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.\_]{0,99}$', parts[1])):
-                    full = f"https://github.com/{parts[0]}/{parts[1]}"
-                    if full not in seen:
-                        seen.add(full)
-                        repos.append(Repo(name=f"{parts[0]}/{parts[1]}", url=full))
+                if "." in owner:
+                    continue
+                full = f"https://github.com/{owner}/{repo_name}"
+                if full not in seen:
+                    seen.add(full)
+                    repos.append(Repo(name=f"{owner}/{repo_name}", url=full))
                 if len(repos) >= max_repos:
                     break
-
-            # Strategy 2: parse all links on the page, filter aggressively
-            if len(repos) < max_repos:
-                all_links = await self.page.query_selector_all("a[href]")
-                for link in all_links:
-                    href = (await link.get_attribute("href") or "").strip()
-                    if not href.startswith("/"):
-                        continue
-                    parts = href.strip("/").split("/")
-                    if (len(parts) == 2
-                            and parts[0] not in self.SKIP_OWNERS
-                            and parts[1]
-                            and len(parts[0]) > 1
-                            and len(parts[1]) > 1
-                            and "." not in parts[0]
-                            and not any(x in parts[1] for x in ["?", "#", "."])):
-                        full = f"https://github.com/{parts[0]}/{parts[1]}"
-                        if full not in seen:
-                            seen.add(full)
-                            repos.append(Repo(name=f"{parts[0]}/{parts[1]}", url=full))
-                    if len(repos) >= max_repos:
-                        break
-
         except Exception as e:
             print(f"  ⚠️  Search error: {e}")
 
@@ -181,52 +119,15 @@ class GitHubBrowserScanner:
         return repos[:max_repos]
 
     async def get_repo_details(self, repo: Repo) -> Repo:
-        """Visit a repo page and extract stars, description, language."""
+        """Get repo details via GitHub API."""
         try:
-            await self.page.goto(repo.url, timeout=15000)
-            await self.page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(2)
-
-            # Stars
-            try:
-                star_el = await self.page.query_selector("#repo-stars-counter-star, span[id*='stargazers']")
-                if star_el:
-                    txt = await star_el.inner_text()
-                    txt = txt.replace(",", "").replace("k", "000").strip()
-                    repo.stars = int(re.sub(r"[^\d]", "", txt) or "0")
-            except:
-                pass
-
-            # Description — try multiple selectors across GitHub DOM versions
-            try:
-                desc_el = await self.page.query_selector(
-                    "[data-testid='repo-description'], "
-                    "p.f4.my-3, "
-                    ".repository-description, "
-                    "#repo-content-pjax-container p.color-fg-muted, "
-                    "p[class*='description']"
-                )
-                if desc_el:
-                    repo.description = (await desc_el.inner_text()).strip()[:200]
-                else:
-                    # Fallback: grab meta description tag
-                    meta = await self.page.query_selector("meta[name='description']")
-                    if meta:
-                        repo.description = (await meta.get_attribute("content") or "").strip()[:200]
-            except:
-                pass
-
-            # Language
-            try:
-                lang_el = await self.page.query_selector("span[itemprop='programmingLanguage']")
-                if lang_el:
-                    repo.language = (await lang_el.inner_text()).strip()
-            except:
-                pass
-
+            data = self._fetch_json(f"https://api.github.com/repos/{repo.name}")
+            if isinstance(data, dict):
+                repo.stars = data.get("stargazers_count", 0)
+                repo.description = (data.get("description") or "")[:200]
+                repo.language = data.get("language") or ""
         except Exception as e:
             print(f"  ⚠️  Repo detail error for {repo.name}: {e}")
-
         return repo
 
     async def get_contributors(self, repo: Repo, max_contributors: int = 8) -> list[Contributor]:
@@ -250,130 +151,64 @@ class GitHubBrowserScanner:
                         repos_contributed=[repo.name],
                     ))
 
-        # Strategy 2: Browser scrape fallback if API returned nothing
+        # Strategy 2: Crawl4AI fallback if API returned nothing
         if not contributors:
-            url = f"{repo.url}/contributors"
             try:
-                await self.page.goto(url, timeout=20000)
-                await self.page.wait_for_load_state("domcontentloaded")
-                await asyncio.sleep(3)
-
-                # Try multiple selector patterns for GitHub's evolving DOM
-                for selector in [
-                    "a[data-hovercard-type='user']",
-                    "li.contrib-person a[href]",
-                    ".contrib-person a[href]",
-                    "ol.contrib-data li a[href]",
-                ]:
-                    links = await self.page.query_selector_all(selector)
-                    for link in links:
-                        href = (await link.get_attribute("href") or "").strip("/")
-                        if (href and "/" not in href
-                                and re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-]{0,37}$', href)
-                                and href not in seen_users):
-                            seen_users.add(href)
-                            contributors.append(Contributor(
-                                username=href,
-                                profile_url=f"https://github.com/{href}",
-                                repos_contributed=[repo.name],
-                            ))
-                        if len(contributors) >= max_contributors:
-                            break
-                    if contributors:
+                result = await self.crawler.arun(url=f"{repo.url}/contributors", config=self._run_cfg)
+                hrefs = re.findall(r'href="/([a-zA-Z0-9][a-zA-Z0-9\-]{0,37})"', result.html or "")
+                for href in hrefs:
+                    if href not in seen_users and href not in self.SKIP_OWNERS:
+                        seen_users.add(href)
+                        contributors.append(Contributor(
+                            username=href,
+                            profile_url=f"https://github.com/{href}",
+                            repos_contributed=[repo.name],
+                        ))
+                    if len(contributors) >= max_contributors:
                         break
-
             except Exception as e:
-                print(f"  ⚠️  Contributors browser error for {repo.name}: {e}")
+                print(f"  ⚠️  Contributors crawl error for {repo.name}: {e}")
 
         return contributors[:max_contributors]
 
     async def get_profile(self, contributor: Contributor) -> Contributor:
         """Visit a contributor's GitHub profile and extract details."""
         try:
-            await self.page.goto(contributor.profile_url, timeout=15000)
-            await self.page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(2)
+            result = await self.crawler.arun(url=contributor.profile_url, config=self._run_cfg)
+            h = result.html or ""
 
-            # Real name
-            try:
-                name_el = await self.page.query_selector("span[itemprop='name'], .p-name")
-                if name_el:
-                    contributor.name = (await name_el.inner_text()).strip()
-            except:
-                pass
+            # Name
+            m = re.search(r'itemprop="name"[^>]*>\s*([^<]{1,80})', h) or re.search(r'class="[^"]*p-name[^"]*"[^>]*>\s*([^<]{1,80})', h)
+            if m: contributor.name = m.group(1).strip()
 
             # Company
-            try:
-                co_el = await self.page.query_selector("span[itemprop='worksFor'], .p-org")
-                if co_el:
-                    contributor.company = (await co_el.inner_text()).strip()
-            except:
-                pass
+            m = re.search(r'itemprop="worksFor"[^>]*>\s*([^<]{1,80})', h) or re.search(r'p-org[^>]*>\s*([^<]{1,80})', h)
+            if m: contributor.company = m.group(1).strip()
 
             # Location
-            try:
-                loc_el = await self.page.query_selector("span[itemprop='homeLocation'], .p-label")
-                if loc_el:
-                    contributor.location = (await loc_el.inner_text()).strip()
-            except:
-                pass
+            m = re.search(r'itemprop="homeLocation"[^>]*>\s*([^<]{1,80})', h) or re.search(r'p-label[^>]*>\s*([^<]{1,80})', h)
+            if m: contributor.location = m.group(1).strip()
 
             # Bio
-            try:
-                bio_el = await self.page.query_selector("div[data-bio-text], .p-note")
-                if bio_el:
-                    contributor.bio = (await bio_el.inner_text()).strip()[:200]
-            except:
-                pass
+            m = re.search(r'data-bio-text="([^"]{3,200})"', h) or re.search(r'p-note[^>]*>\s*([^<]{3,200})', h)
+            if m: contributor.bio = html.unescape(m.group(1).strip())[:200]
 
             # Pinned repos
-            try:
-                pinned = await self.page.query_selector_all("div.pinned-item-list-item a.mr-1")
-                contributor.pinned_repos = []
-                for p in pinned[:6]:
-                    txt = (await p.inner_text()).strip()
-                    if txt:
-                        contributor.pinned_repos.append(txt)
-            except:
-                pass
+            contributor.pinned_repos = re.findall(r'class="[^"]*repo[^"]*"[^>]*>\s*([a-zA-Z0-9\-\.\_]{1,50})\s*<', h)[:6]
 
             # Orgs
-            try:
-                org_els = await self.page.query_selector_all("a[data-hovercard-type='organization']")
-                contributor.orgs = []
-                for o in org_els[:5]:
-                    txt = (await o.get_attribute("href") or "").strip("/")
-                    if txt:
-                        contributor.orgs.append(txt)
-            except:
-                pass
+            contributor.orgs = list(dict.fromkeys(re.findall(r'data-hovercard-type="organization"[^>]*href="/([^"]+)"', h)))[:5]
 
-            # Email (publicly visible on profile)
-            try:
-                email_el = await self.page.query_selector(
-                    "a[href^='mailto:'], li[itemprop='email'], "
-                    ".p-email, span[itemprop='email']"
-                )
-                if email_el:
-                    raw = await email_el.inner_text()
-                    contributor.email = raw.strip()
-                else:
-                    page_text = await self.page.inner_text(".vcard-details") if await self.page.query_selector(".vcard-details") else ""
-                    match = re.search(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", page_text)
-                    if match:
-                        contributor.email = match.group(0)
-            except:
-                pass
+            # Email visible on profile
+            m = re.search(r'href="mailto:([^"]+)"', h)
+            if m: contributor.email = m.group(1).strip()
+            if not contributor.email:
+                m = re.search(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', result.markdown or "")
+                if m and "github.com" not in m.group(0): contributor.email = m.group(0)
 
-            # Website URL from profile (used later for Fix A email mining)
-            try:
-                website_el = await self.page.query_selector(
-                    "a[itemprop='url'], .p-url, li a[rel='nofollow me']"
-                )
-                if website_el:
-                    contributor.website = (await website_el.get_attribute("href") or "").strip()
-            except:
-                pass
+            # Website
+            m = re.search(r'itemprop="url"[^>]*href="([^"]+)"', h) or re.search(r'rel="nofollow me"[^>]*href="([^"]+)"', h)
+            if m: contributor.website = m.group(1).strip()
 
         except Exception as e:
             print(f"  ⚠️  Profile error for {contributor.username}: {e}")
@@ -429,59 +264,73 @@ class GitHubBrowserScanner:
     def enrich_via_stackoverflow(username: str, name: str) -> str:
         """Look up contributor on Stack Overflow and extract email or website.
 
-        Uses the free SO API (no key needed for basic lookups).
-        Searches by GitHub username first, then by display name.
-        Returns email if found on their SO profile, else empty string.
+        Uses the SE API v2.3 exclusively — no Firecrawl.
+        Step 1: search users by inname, pick best match.
+        Step 2: fetch that user's full profile (about_me + website_url).
+        Returns email found in about_me, or falls back to crawling website_url.
         """
-        fc_key = os.environ.get("FIRECRAWL_API_KEY", "")
         EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
         NOREPLY  = {"noreply@github.com", "users.noreply.github.com", "stackoverflow.com"}
 
-        # Step 1: find SO user_id via API
+        def _se_url(path: str, **params) -> str:
+            base_params = {"site": "stackoverflow"}
+            if SE_APP_KEY:
+                base_params["key"] = SE_APP_KEY
+            base_params.update(params)
+            qs = urllib.parse.urlencode(base_params)
+            return f"https://api.stackexchange.com/2.3{path}?{qs}"
+
+        # Step 1: find SO user_id
         search_term = urllib.parse.quote(username)
-        api_url = (
-            f"https://api.stackexchange.com/2.3/users"
-            f"?inname={search_term}&site=stackoverflow&pagesize=3&order=desc&sort=reputation"
+        search_url = _se_url(
+            "/users",
+            inname=search_term,
+            pagesize=3,
+            order="desc",
+            sort="reputation",
         )
-        data = GitHubBrowserScanner._fetch_json(api_url)
+        data = GitHubBrowserScanner._fetch_json(search_url)
         user_id = None
-        so_profile_url = None
 
         if isinstance(data, dict):
             items = data.get("items", [])
-            # Try to match by display_name or GitHub username
             for item in items:
                 display = (item.get("display_name") or "").lower()
                 if username.lower() in display or (name and name.lower().split()[0] in display):
                     user_id = item.get("user_id")
-                    so_profile_url = item.get("link", "")
                     break
             if not user_id and items:
                 user_id = items[0].get("user_id")
-                so_profile_url = items[0].get("link", "")
 
-        if not so_profile_url or not fc_key:
+        if not user_id:
             return ""
 
-        # Step 2: Firecrawl scrape the SO profile page
-        try:
-            from firecrawl import FirecrawlApp
-            app = FirecrawlApp(api_key=fc_key)
-            result = app.scrape_url(so_profile_url, formats=["markdown"])
-            text = html.unescape(result.markdown or "")
+        # Step 2: fetch full profile — about_me and website_url
+        profile_url = _se_url(
+            f"/users/{user_id}",
+            filter="!SyjNqbwGU2NWZ1y5pj",  # custom filter: default + user.about_me
+        )
+        profile_data = GitHubBrowserScanner._fetch_json(profile_url)
+        if not isinstance(profile_data, dict):
+            return ""
 
-            # Extract email
-            for match in EMAIL_RE.finditer(text):
-                email = match.group(0).lower()
-                if not any(nr in email for nr in NOREPLY):
-                    return email
+        profile_items = profile_data.get("items", [])
+        if not profile_items:
+            return ""
 
-            # Extract website link from profile, then scrape that too
-            website_match = re.search(r'https?://(?!stackoverflow)[^\s\)\"\']+', text)
-            if website_match:
-                return GitHubBrowserScanner.crawl_website_email(website_match.group(0))
-        except Exception:
-            pass
+        profile = profile_items[0]
+
+        # Check about_me for email
+        about_me = html.unescape(profile.get("about_me") or "")
+        for match in EMAIL_RE.finditer(about_me):
+            email = match.group(0).lower()
+            if not any(nr in email for nr in NOREPLY):
+                return email
+
+        # Fall back to crawling website_url
+        website_url = (profile.get("website_url") or "").strip()
+        if website_url and website_url.startswith("http"):
+            return GitHubBrowserScanner.crawl_website_email(website_url)
 
         return ""
 
@@ -536,8 +385,11 @@ class GitHubBrowserScanner:
 
     @staticmethod
     def _fetch_json(url: str) -> list | dict | None:
-        """Fetch JSON from a public URL (no auth). Returns None on error."""
-        req = urllib.request.Request(url, headers={"User-Agent": "GitHubRadar/1.0"})
+        """Fetch JSON from GitHub API with optional auth token."""
+        headers = {"User-Agent": "GitHubRadar/1.0"}
+        if GITHUB_TOKEN:
+            headers["Authorization"] = f"token {GITHUB_TOKEN}"
+        req = urllib.request.Request(url, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read())
@@ -632,13 +484,9 @@ class GitHubBrowserScanner:
 
     async def stop(self):
         try:
-            if self.browser:
-                await self.browser.close()
-            if self.pw:
-                await self.pw.stop()
-            if self.session:
-                self.bb.sessions.update(self.session.id, status="REQUEST_RELEASE")
-                print(f"  🛑 Session ended: {self.session.id}")
+            if self.crawler:
+                await self.crawler.__aexit__(None, None, None)
+                print("  🛑 Crawl4AI session closed")
         except Exception as e:
             print(f"  ⚠️  Cleanup error: {e}")
 
@@ -766,11 +614,139 @@ class GitHubRadarAgent:
         self.scanner = GitHubBrowserScanner()
         self.analyzer = GitHubAnalyzer()
 
+    async def run_stackoverflow_pipeline(self, yield_event=None):
+        """SO-only pipeline — no GitHub, no browser. Searches SO top answerers by tag."""
+
+        def emit(type_, msg, data=None):
+            if yield_event:
+                yield_event(type_, msg, data)
+            else:
+                print(f"  [{type_}] {msg}")
+
+        emit("agent", f"🔶 Stack Overflow Radar starting for: {self.keyword}")
+
+        def se_url(path, **params):
+            base = {"site": "stackoverflow"}
+            if SE_APP_KEY:
+                base["key"] = SE_APP_KEY
+            base.update(params)
+            qs = urllib.parse.urlencode(base)
+            return f"https://api.stackexchange.com/2.3{path}?{qs}"
+
+        EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+        NOREPLY  = {"noreply@github.com", "users.noreply.github.com", "stackoverflow.com"}
+
+        # Step 1: get top answerers for the tag
+        tag = urllib.parse.quote(self.keyword.lower().replace(" ", "-"))
+        emit("agent", f"🔍 Fetching top Stack Overflow answerers for tag: {self.keyword}")
+        data = GitHubBrowserScanner._fetch_json(
+            se_url(f"/tags/{tag}/top-answerers/all_time", pagesize=self.max_contributors)
+        )
+
+        items = (data or {}).get("items", [])
+        if not items:
+            emit("error", f"No Stack Overflow users found for tag: {self.keyword}")
+            return {"error": "no_results", "keyword": self.keyword}
+
+        emit("contributors_found", f"Found {len(items)} top answerers", {
+            "contributors": [i.get("user", {}).get("display_name") for i in items]
+        })
+
+        # Step 2: fetch full profile for each user
+        contributors = []
+        user_ids = [str(i["user"]["user_id"]) for i in items if i.get("user", {}).get("user_id")]
+        ids_joined = ";".join(user_ids)
+        profiles_data = GitHubBrowserScanner._fetch_json(
+            se_url(f"/users/{ids_joined}", filter="!SyjNqbwGU2NWZ1y5pj", pagesize=self.max_contributors)
+        )
+        profiles = {str(p["user_id"]): p for p in (profiles_data or {}).get("items", [])}
+
+        for item in items:
+            user = item.get("user", {})
+            uid = str(user.get("user_id", ""))
+            profile = profiles.get(uid, user)
+
+            display_name = profile.get("display_name", "")
+            so_link = profile.get("link") or user.get("link", "")
+            about_me = html.unescape(profile.get("about_me") or "")
+            website_url = (profile.get("website_url") or "").strip()
+            location = profile.get("location", "")
+
+            emit("profiling", f"👤 Processing {display_name}...")
+
+            # Find email
+            email = ""
+            for m in EMAIL_RE.finditer(about_me):
+                e = m.group(0).lower()
+                if not any(nr in e for nr in NOREPLY):
+                    email = e
+                    break
+
+            if not email and website_url and website_url.startswith("http"):
+                emit("crawling_email", f"📧 [SO] Crawling website for {display_name}...")
+                email = GitHubBrowserScanner.crawl_website_email(website_url)
+
+            if email:
+                emit("email_found", f"📧 [SO] {display_name} → {email}")
+            else:
+                emit("email_none", f"📧 {display_name} — Email not found")
+
+            c = Contributor(
+                username=display_name,
+                profile_url=so_link,
+                name=display_name,
+                location=location,
+                website=website_url,
+                email=email,
+            )
+            contributors.append(c)
+
+        # Step 3: analyze with gpt-4o-mini
+        emit("agent", f"🧠 Analysing {len(contributors)} contributors with gpt-4o-mini...")
+        analyses = []
+        for c in contributors:
+            emit("analyzing", f"🤖 Scoring {c.name}...")
+            analysis = self.analyzer.score_contributor(c, self.keyword)
+            analysis["username"] = c.username
+            analyses.append(analysis)
+            emit("scored", f"{c.name} → score {analysis.get('activity_score', 0)}", analysis)
+
+        # Step 4: build report
+        emit("agent", "📊 Building report...")
+        analysis_map = {a["username"]: a for a in analyses}
+        report = {
+            "keyword": self.keyword,
+            "source": "stackoverflow",
+            "repos_scanned": 0,
+            "contributors_found": len(contributors),
+            "repos": [],
+            "top_contributors": [
+                {
+                    "username": c.username,
+                    "name": c.name,
+                    "location": c.location,
+                    "email": c.email,
+                    "profile_url": c.profile_url,
+                    "website": c.website,
+                    "activity_score": analysis_map.get(c.username, {}).get("activity_score", 0),
+                    "tier": analysis_map.get(c.username, {}).get("tier", "active"),
+                    "summary": analysis_map.get(c.username, {}).get("summary", ""),
+                    "repos_contributed": [],
+                }
+                for c in contributors
+            ],
+        }
+        emit("complete", "✅ Stack Overflow scan complete!", report)
+        return report
+
     async def run(self, yield_event=None):
         """
         Run the full crawl.
         yield_event(type, message, data=None) — called for SSE streaming.
         """
+
+        if self.sources == {"stackoverflow"}:
+            return await self.run_stackoverflow_pipeline(yield_event=yield_event)
 
         def emit(type_, msg, data=None):
             if yield_event:
@@ -786,9 +762,9 @@ class GitHubRadarAgent:
 
         try:
             # Start browser
-            emit("agent", "🌐 Starting Browserbase session...")
+            emit("agent", "🌐 Starting Crawl4AI session...")
             await self.scanner.start()
-            emit("agent", f"✅ Browser connected — session {self.scanner.session.id}")
+            emit("agent", "✅ Browser connected")
 
             # Step 1: Search repos
             emit("agent", f"🔍 Searching GitHub for: {self.keyword}")
@@ -828,13 +804,25 @@ class GitHubRadarAgent:
                 contributor = await self.scanner.get_profile(contributor)
 
                 # ── Email: GitHub commits + events API ───────────────
-                emit("crawling_email", f"📧 [GitHub] Crawling commits for @{contributor.username}...")
-                crawled_emails = self.scanner.crawl_public_emails(contributor.username)
-                if crawled_emails:
-                    contributor.email = ", ".join(sorted(set(crawled_emails)))
-                    emit("email_found", f"📧 [GitHub] @{contributor.username} → {contributor.email}")
-                elif not contributor.email:
-                    emit("email_none", f"📧 @{contributor.username} — no public email found")
+                if "github" in self.sources:
+                    emit("crawling_email", f"📧 [GitHub] Crawling commits for @{contributor.username}...")
+                    crawled_emails = self.scanner.crawl_public_emails(contributor.username)
+                    if crawled_emails:
+                        contributor.email = ", ".join(sorted(set(crawled_emails)))
+                        emit("email_found", f"📧 [GitHub] @{contributor.username} → {contributor.email}")
+
+                if not contributor.email:
+                    if "stackoverflow" in self.sources:
+                        emit("crawling_email", f"📧 [SO] Trying Stack Overflow for @{contributor.username}...")
+                        so_email = GitHubBrowserScanner.enrich_via_stackoverflow(
+                            contributor.username, contributor.name
+                        )
+                        if so_email:
+                            contributor.email = so_email
+                            emit("email_found", f"📧 [SO] @{contributor.username} → {contributor.email}")
+
+                if not contributor.email:
+                    emit("email_none", f"📧 @{contributor.username} — Email not found")
 
                 emit("profile_done", f"@{contributor.username} — {contributor.company or contributor.bio[:50] or 'no bio'}")
 
@@ -902,7 +890,7 @@ async def main():
     for c in report.get("top_contributors", [])[:10]:
         tier = c.get("tier", "?")
         score = c.get("activity_score", 0)
-        email = c.get("email", "") or "—"
+        email = c.get("email", "") or "Email not found"
         summary = c.get("summary", c.get("bio", ""))[:70]
         print(f"  [{tier:8}] @{c['username']:<20} score={score:>3}  📧 {email}")
         if summary:
