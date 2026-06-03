@@ -394,6 +394,32 @@ def capture_email():
         # Save locally
         with open("leads.csv", "a") as f:
             f.write(f"{datetime.datetime.utcnow().isoformat()},{email},{company}\n")
+        # Send welcome email via Resend
+        try:
+            import resend
+            resend.api_key = os.environ.get("RESEND_API_KEY", "")
+            name = email.split("@")[0].capitalize()
+            resend.Emails.send({
+                "from": "onboarding@resend.dev",
+                "to": email,
+                "subject": "🛡️ Welcome to Gitradar — You're In!",
+                "html": f"""<p>Hey {name} 👋,</p>
+<p>Welcome to <strong>Gitradar</strong> — the fastest way to find top GitHub contributors in any domain. 🚀</p>
+<p><strong>Here's what you can do:</strong></p>
+<ul>
+<li>🔍 Search any keyword (vulnerability, AI agents, pentest, SIEM...)</li>
+<li>👥 Get top contributors with tier scores, emails, and summaries</li>
+<li>📧 Identify who's actually active — not just starred repos</li>
+<li>⬇️ Export results to CSV</li>
+</ul>
+<p>Just enter a keyword and hit <strong>Scan</strong>. Results in under 2 minutes. ⚡</p>
+<br>
+<p><a href="https://huggingface.co/spaces/chaitubatman/github-radar" style="background:#238636;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600">Open Gitradar →</a></p>
+<br>
+<p>— Chaitanya 🛡️</p>"""
+            })
+        except Exception as e:
+            print(f"Resend error: {e}")
         # Send to Google Sheets via Apps Script
         try:
             payload = _json.dumps({"email": email, "company": company}).encode()
