@@ -371,7 +371,10 @@ function startScan() {
           var tier = c.tier || 'active';
           var score = Math.min(100, c.activity_score || 0);
           var tr = document.createElement('tr');
-          var emailCell = c.email ? '<a href="mailto:' + c.email + '" style="color:#58a6ff">' + c.email + '</a>' : '<span style="color:#484f58">none</span>';
+          var emailDomain = c.email && c.email.includes('@') ? c.email.split('@')[1] : '';
+          var freeEmails = ['gmail.com','yahoo.com','hotmail.com','outlook.com','icloud.com','protonmail.com'];
+          var logoHtml = (emailDomain && !freeEmails.includes(emailDomain)) ? '<img src="https://logos.context.dev?domain=' + emailDomain + '" style="width:16px;height:16px;border-radius:3px;vertical-align:middle;margin-right:5px;"> ' : '';
+          var emailCell = c.email ? logoHtml + '<a href="mailto:' + c.email + '" style="color:#58a6ff">' + c.email + '</a>' : '<span style="color:#484f58">none</span>';
           var companyRow = c.company ? '<br><small style="color:#8b949e">' + c.company + '</small>' : '';
           tr.innerHTML =
             '<td><a href="' + c.profile_url + '" target="_blank" class="username">@' + c.username + '</a>' + companyRow + '</td>' +
@@ -448,9 +451,38 @@ def capture_email():
             })
         except Exception as e:
             print(f"Resend error: {e}")
+        # Enrich company via Context.dev (auto-skips free emails with 422)
+        company_data = {}
+        try:
+            ctx_key = os.environ.get("CONTEXT_DEV_API_KEY", "")
+            if ctx_key:
+                import urllib.parse
+                req = urllib.request.Request(
+                    f"https://api.context.dev/v1/brand/retrieve-by-email?email={urllib.parse.quote(email)}",
+                    headers={
+                        "Authorization": f"Bearer {ctx_key}",
+                        "Accept": "application/json",
+                        "User-Agent": "Mozilla/5.0"
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    resp = _json.loads(r.read())
+                    company_data = resp.get("brand", {})
+                eic = (company_data.get("industries") or {}).get("eic") or []
+                industry = eic[0].get("industry","") if eic else ""
+                company_data["_industry"] = industry
+                print(f"Context.dev: {email} → {company_data.get('title','?')} | {industry}")
+        except Exception as e:
+            if "422" not in str(e):
+                print(f"Context.dev error: {e}")
         # Send to Google Sheets via Apps Script
         try:
-            payload = _json.dumps({"email": email, "company": company}).encode()
+            payload = _json.dumps({
+                "email": email,
+                "company": company or company_data.get("title", ""),
+                "industry": company_data.get("_industry", "") if company_data else "",
+                "description": company_data.get("description", "") if company_data else ""
+            }).encode()
             req = urllib.request.Request(
                 "https://script.google.com/macros/s/AKfycbxnTIR1N06S-0_XZWODTRGjjiMvNjtSfYB3AT4wJ86jJRpk8UVyyzE5xYU8QSz64Bvo/exec",
                 data=payload,
