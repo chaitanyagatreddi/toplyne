@@ -236,14 +236,13 @@ function submitGate() {
     document.getElementById('gateError').style.display = 'block';
     return;
   }
+  localStorage.setItem('gr_access', '1');
+  document.getElementById('emailGate').style.display = 'none';
   fetch('/api/capture-email', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({email: email, company: company})
-  }).finally(function() {
-    localStorage.setItem('gr_access', '1');
-    document.getElementById('emailGate').style.display = 'none';
-  });
+  }).catch(function() {});
 }
 
 function setKeyword(kw) {
