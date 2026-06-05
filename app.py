@@ -249,9 +249,22 @@ function exportCSV() {
   URL.revokeObjectURL(url);
 }
 
-// Email gate
+// Email gate — uses cookie fallback for HuggingFace iframe sandbox
+function getCookie(name) {
+  var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  return match ? match[2] : null;
+}
+function setAccess() {
+  try { localStorage.setItem('gr_access', '1'); } catch(e) {}
+  document.cookie = 'gr_access=1; path=/; max-age=86400';
+}
+function hasAccess() {
+  try { if (localStorage.getItem('gr_access')) return true; } catch(e) {}
+  return getCookie('gr_access') === '1';
+}
+
 (function() {
-  if (!localStorage.getItem('gr_access')) {
+  if (!hasAccess()) {
     document.getElementById('emailGate').style.display = 'flex';
   }
 })();
@@ -263,7 +276,7 @@ function submitGate() {
     document.getElementById('gateError').style.display = 'block';
     return;
   }
-  localStorage.setItem('gr_access', '1');
+  setAccess();
   document.getElementById('emailGate').style.display = 'none';
   fetch('/api/capture-email', {
     method: 'POST',
