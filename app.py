@@ -29,6 +29,14 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
 <title>GitHub Radar | Cybersecurity Contributors</title>
 <meta name="description" content="Find cybersecurity contributors worth knowing — scans GitHub for security tool repos, maps top contributors, scores them with gpt-4o-mini.">
 
+<script type="module">
+  // Motion One — vanilla animation library. Exposed on window.M so
+  // existing inline JS can call it. Safe to fail.
+  import { animate, stagger, inView, spring } from "https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm";
+  window.M = { animate, stagger, inView, spring, ready: true };
+  window.dispatchEvent(new Event('motion-ready'));
+</script>
+
 <!-- Open Graph -->
 <meta property="og:type" content="website">
 <meta property="og:title" content="GitHub Radar — Cybersecurity contributor radar">
@@ -126,6 +134,11 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
   <span>This space runs on a free server — it may take <strong>30–60 seconds</strong> to wake up. Hang tight.</span>
   <button onclick="document.getElementById('wakeNotice').style.display='none'" style="margin-left:auto;background:none;border:none;color:#f0883e;cursor:pointer;font-size:16px;line-height:1;">×</button>
 </div>
+<script>
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    document.getElementById('wakeNotice').style.display = 'none';
+  }
+</script>
 
 <div class="header">
   <h1>🛡️ GitHub Radar</h1>
@@ -156,10 +169,26 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
       <span class="tool-chip" onclick="setKeyword('hashcat')">Hashcat</span>
     </div>
   </div>
+  <!-- Mode toggle -->
+  <div style="display:flex;gap:8px;margin-bottom:14px">
+    <button id="modeKeyword" onclick="setMode('keyword')"
+      style="background:#238636;border:none;color:#fff;padding:6px 16px;font-size:12px;font-weight:600;border-radius:20px;cursor:pointer;">
+      🔍 Keyword
+    </button>
+    <button id="modeUrl" onclick="setMode('url')"
+      style="background:#21262d;border:1px solid #30363d;color:#8b949e;padding:6px 16px;font-size:12px;font-weight:600;border-radius:20px;cursor:pointer;">
+      🔗 GitHub URL
+    </button>
+  </div>
+
   <div class="form-row">
-    <div style="flex:1; min-width:220px">
+    <div id="keywordField" style="flex:1; min-width:220px">
       <label>Keyword / tool name</label>
       <input type="text" id="keyword" placeholder="OWASP ZAP, nuclei, SIEM..." value="OWASP ZAP" />
+    </div>
+    <div id="urlField" style="flex:1; min-width:220px; display:none">
+      <label>GitHub repo or org URL</label>
+      <input type="text" id="githubUrl" placeholder="https://github.com/owner/repo  or  github.com/org" />
     </div>
     <div>
       <label>Repos to scan</label>
@@ -167,6 +196,8 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
         <option value="3">3 repos</option>
         <option value="5" selected>5 repos</option>
         <option value="8">8 repos</option>
+        <option value="15">15 repos</option>
+        <option value="25">25 repos</option>
       </select>
     </div>
     <div>
@@ -174,6 +205,7 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
       <select id="maxContributors">
         <option value="5">5</option>
         <option value="8" selected>8</option>
+        <option value="10">10</option>
         <option value="12">12</option>
       </select>
     </div>
@@ -198,7 +230,7 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="log" id="log" style="margin-top:14px"><div class="log-line">Ready. Enter a keyword and click Scan.</div></div>
+  <div class="log" id="log" style="margin-top:14px"><div class="log-line">Ready. Enter a keyword or drop a GitHub URL and click Scan.</div></div>
 </div>
 
 <div class="card hidden" id="reposSection">
@@ -256,7 +288,17 @@ function exportCSV() {
 }
 
 // Email gate — no storage, works in incognito and iframe sandboxes
-document.getElementById('emailGate').style.display = 'flex';
+(function showGateAnimated() {
+  var g = document.getElementById('emailGate');
+  g.style.display = 'flex';
+  if (window.M) {
+    var card = g.querySelector('div');
+    window.M.animate(g, { opacity: [0, 1] }, { duration: 0.25 });
+    window.M.animate(card,
+      { opacity: [0, 1], transform: ['scale(0.94) translateY(8px)', 'scale(1) translateY(0)'] },
+      { duration: 0.35, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  }
+})();
 
 function submitGate() {
   var email = document.getElementById('gateEmail').value.trim();
@@ -265,7 +307,12 @@ function submitGate() {
     document.getElementById('gateError').style.display = 'block';
     return;
   }
-  document.getElementById('emailGate').style.display = 'none';
+  var g = document.getElementById('emailGate');
+  if (window.M) {
+    window.M.animate(g, { opacity: [1, 0] }, { duration: 0.2 }).then(function() { g.style.display = 'none'; });
+  } else {
+    g.style.display = 'none';
+  }
   fetch('/api/capture-email', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -273,10 +320,30 @@ function submitGate() {
   }).catch(function() {});
 }
 
+var _currentMode = 'keyword';
+
+function setMode(mode) {
+  _currentMode = mode;
+  var kf = document.getElementById('keywordField');
+  var uf = document.getElementById('urlField');
+  var mb = document.getElementById('modeKeyword');
+  var ub = document.getElementById('modeUrl');
+  if (mode === 'url') {
+    kf.style.display = 'none'; uf.style.display = 'block';
+    ub.style.background = '#238636'; ub.style.color = '#fff'; ub.style.border = 'none';
+    mb.style.background = '#21262d'; mb.style.color = '#8b949e'; mb.style.border = '1px solid #30363d';
+  } else {
+    kf.style.display = 'block'; uf.style.display = 'none';
+    mb.style.background = '#238636'; mb.style.color = '#fff'; mb.style.border = 'none';
+    ub.style.background = '#21262d'; ub.style.color = '#8b949e'; ub.style.border = '1px solid #30363d';
+  }
+}
+
 function setKeyword(kw) {
   document.getElementById('keyword').value = kw;
   document.querySelectorAll('.tool-chip').forEach(c => c.classList.remove('active'));
   event.target.classList.add('active');
+  setMode('keyword');
 }
 
 function log(msg, highlight=false) {
@@ -286,6 +353,11 @@ function log(msg, highlight=false) {
   line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
   el.appendChild(line);
   el.scrollTop = el.scrollHeight;
+  if (window.M) {
+    window.M.animate(line,
+      { opacity: [0, 1], transform: ['translateX(-6px)', 'translateX(0)'] },
+      { duration: 0.25, easing: 'ease-out' });
+  }
 }
 
 function setChip(id, state) {
@@ -306,7 +378,10 @@ function getEnabledSources() {
 
 function startScan() {
   const keyword = document.getElementById('keyword').value.trim();
-  if (!keyword) return;
+  const githubUrl = document.getElementById('githubUrl').value.trim();
+  const isUrlMode = _currentMode === 'url';
+  if (isUrlMode && !githubUrl) { log('Please enter a GitHub URL'); return; }
+  if (!isUrlMode && !keyword) { log('Please enter a keyword'); return; }
   const maxRepos = document.getElementById('maxRepos').value;
   const maxContributors = document.getElementById('maxContributors').value;
   const sources = getEnabledSources();
@@ -322,12 +397,19 @@ function startScan() {
   ['browser','search','contributors','profiles','analysis'].forEach(c => setChip(c, ''));
   setSrc('github', 'enabled');
 
-  log('Starting GitHub Radar scan for: ' + keyword, true);
+  const scanLabel = isUrlMode ? githubUrl : keyword;
+  log('Starting GitHub Radar scan for: ' + scanLabel, true);
   log('Email sources: ' + (sources || 'none'));
 
-  const es = new EventSource('/api/github/stream?keyword=' + encodeURIComponent(keyword) +
-    '&max_repos=' + maxRepos + '&max_contributors=' + maxContributors +
-    '&sources=' + encodeURIComponent(sources));
+  var streamUrl = '/api/github/stream?max_repos=' + maxRepos +
+    '&max_contributors=' + maxContributors +
+    '&sources=' + encodeURIComponent(sources);
+  if (isUrlMode) {
+    streamUrl += '&url=' + encodeURIComponent(githubUrl);
+  } else {
+    streamUrl += '&keyword=' + encodeURIComponent(keyword);
+  }
+  const es = new EventSource(streamUrl);
 
   es.onmessage = function(e) {
     try {
@@ -359,6 +441,11 @@ function startScan() {
           '<div class="repo-desc">' + (data.description || 'No description') + '</div>' +
           '<div class="repo-meta"><span class="star">Stars: ' + (data.stars||0).toLocaleString() + '</span></div>';
         grid.appendChild(card);
+        if (window.M) {
+          window.M.animate(card,
+            { opacity: [0, 1], transform: ['scale(0.92) translateY(8px)', 'scale(1) translateY(0)'] },
+            { duration: 0.4, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+        }
       }
 
       if (type === 'complete' && data.top_contributors) {
@@ -375,7 +462,10 @@ function startScan() {
           var emailDomain = c.email && c.email.includes('@') ? c.email.split('@')[1] : '';
           var freeEmails = ['gmail.com','yahoo.com','hotmail.com','outlook.com','icloud.com','protonmail.com'];
           var logoHtml = (emailDomain && !freeEmails.includes(emailDomain)) ? '<img src="https://logos.context.dev?domain=' + emailDomain + '" style="width:16px;height:16px;border-radius:3px;vertical-align:middle;margin-right:5px;" onerror="this.style.display=&apos;none&apos;"> ' : '';
-          var emailCell = c.email ? logoHtml + '<a href="mailto:' + c.email + '" style="color:#58a6ff">' + c.email + '</a>' : '<span style="color:#484f58">none</span>';
+          var sourceColors = {github: '#3fb950', stackoverflow: '#f0883e', prospeo: '#a371f7', search: '#58a6ff'};
+          var sourceLabels = {github: 'GH', stackoverflow: 'SO', prospeo: 'Prospeo', search: 'Web'};
+          var sourceBadge = c.email_source ? ' <span style="background:' + (sourceColors[c.email_source] || '#484f58') + ';color:#fff;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle">' + (sourceLabels[c.email_source] || c.email_source) + '</span>' : '';
+          var emailCell = c.email ? logoHtml + '<a href="mailto:' + c.email + '" style="color:#58a6ff">' + c.email + '</a>' + sourceBadge : '<span style="color:#484f58">none</span>';
           var companyRow = c.company ? '<br><small style="color:#8b949e">' + c.company + '</small>' : '';
           tr.innerHTML =
             '<td><a href="' + c.profile_url + '" target="_blank" class="username">@' + c.username + '</a>' + companyRow + '</td>' +
@@ -387,6 +477,11 @@ function startScan() {
             '<td style="font-size:12px;color:#8b949e">' + (c.repos_contributed || []).join('<br>') + '</td>';
           tbody.appendChild(tr);
         });
+        if (window.M) {
+          window.M.animate(tbody.querySelectorAll('tr'),
+            { opacity: [0, 1], transform: ['translateY(6px)', 'translateY(0)'] },
+            { duration: 0.35, delay: window.M.stagger(0.04), easing: 'ease-out' });
+        }
         document.getElementById('scanBtn').disabled = false;
         es.close();
       }
@@ -505,11 +600,15 @@ def og_image():
 
 @app.route("/api/github/stream")
 def github_stream():
-    keyword = request.args.get("keyword", "vulnerability scanner")
+    keyword = request.args.get("keyword", "")
+    github_url = request.args.get("url", "").strip()
     max_repos = int(request.args.get("max_repos", 5))
     max_contributors = int(request.args.get("max_contributors", 8))
     sources_raw = request.args.get("sources", "github,website,stackoverflow,websearch")
     enabled_sources = set(s.strip() for s in sources_raw.split(",") if s.strip())
+
+    if not keyword and not github_url:
+        keyword = "vulnerability scanner"
 
     q = queue.Queue()
 
@@ -518,19 +617,21 @@ def github_stream():
         q.put(json.dumps(payload))
 
     def run_crawler():
-        from github_crawler import GitHubRadarAgent
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            from github_crawler import GitHubRadarAgent
             agent = GitHubRadarAgent(
                 keyword=keyword,
+                github_url=github_url,
                 max_repos=max_repos,
                 max_contributors=max_contributors,
                 enabled_sources=enabled_sources,
             )
             loop.run_until_complete(agent.run(yield_event=yield_event))
         except Exception as e:
-            yield_event("error", str(e))
+            import traceback
+            yield_event("error", f"{str(e)}\n{traceback.format_exc()}")
         finally:
             q.put(None)
             loop.close()
