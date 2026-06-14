@@ -294,31 +294,64 @@ function exportCSV() {
   if (window.M) {
     var card = g.querySelector('div');
     window.M.animate(g, { opacity: [0, 1] }, { duration: 0.25 });
+    // Spring entrance (per motion.dev docs)
     window.M.animate(card,
-      { opacity: [0, 1], transform: ['scale(0.94) translateY(8px)', 'scale(1) translateY(0)'] },
-      { duration: 0.35, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+      { opacity: [0, 1], transform: ['scale(0.92) translateY(12px)', 'scale(1) translateY(0)'] },
+      { type: 'spring', bounce: 0.3, visualDuration: 0.4 });
+    // Input focus glow
+    g.querySelectorAll('input').forEach(function(input) {
+      input.addEventListener('focus', function() {
+        window.M.animate(input, { boxShadow: '0 0 0 3px rgba(63,185,80,0.25)' }, { duration: 0.2 });
+      });
+      input.addEventListener('blur', function() {
+        window.M.animate(input, { boxShadow: '0 0 0 0px rgba(63,185,80,0)' }, { duration: 0.2 });
+      });
+    });
   }
 })();
+
+function shakeGateCard() {
+  if (!window.M) return;
+  var card = document.getElementById('emailGate').querySelector('div');
+  window.M.animate(card,
+    { transform: ['translateX(0)', 'translateX(-8px)', 'translateX(8px)', 'translateX(-6px)', 'translateX(6px)', 'translateX(-3px)', 'translateX(3px)', 'translateX(0)'] },
+    { duration: 0.5, easing: 'linear' });
+}
 
 function submitGate() {
   var email = document.getElementById('gateEmail').value.trim();
   var company = document.getElementById('gateCompany').value.trim();
   if (!email || !email.includes('@')) {
     document.getElementById('gateError').style.display = 'block';
+    shakeGateCard();
     return;
   }
-  var g = document.getElementById('emailGate');
-  if (window.M) {
-    window.M.animate(g, { opacity: [1, 0] }, { duration: 0.2 }).then(function() { g.style.display = 'none'; });
-  } else {
-    g.style.display = 'none';
+  var btn = document.querySelector('#emailGate button');
+  if (btn && window.M) {
+    window.M.animate(btn, { transform: ['scale(1)', 'scale(0.96)', 'scale(1)'] }, { duration: 0.2 });
+    btn.innerHTML = '<span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:gr-spin 0.7s linear infinite;vertical-align:middle;margin-right:6px"></span>Saving…';
   }
+  var g = document.getElementById('emailGate');
+  setTimeout(function() {
+    if (window.M) {
+      window.M.animate(g, { opacity: [1, 0] }, { duration: 0.2 }).then(function() { g.style.display = 'none'; });
+    } else {
+      g.style.display = 'none';
+    }
+  }, 300);
   fetch('/api/capture-email', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({email: email, company: company})
   }).catch(function() {});
 }
+
+// Spinner keyframes
+(function injectGrSpinKf() {
+  var s = document.createElement('style');
+  s.textContent = '@keyframes gr-spin { to { transform: rotate(360deg); } }';
+  document.head.appendChild(s);
+})();
 
 var _currentMode = 'keyword';
 
