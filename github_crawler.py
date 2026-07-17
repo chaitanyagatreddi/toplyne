@@ -28,17 +28,10 @@ from typing import Optional
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 import openai
 
-try:
-    import anthropic
-except ImportError:
-    anthropic = None
-
 # ── Config ────────────────────────────────────────────────────────
 
 GITHUB_TOKEN    = os.environ.get("GITHUB_TOKEN", "")
 OPENAI_KEY      = os.environ.get("OPENAI_API_KEY", "")
-ANTHROPIC_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
-USE_CLAUDE      = bool(ANTHROPIC_KEY) and anthropic is not None
 SE_APP_KEY     = os.environ.get("SE_APP_KEY", "")   # optional — raises limit to 10k/day
 PROSPEO_API_KEY = os.environ.get("PROSPEO_API_KEY", "")
 
@@ -610,80 +603,8 @@ Return JSON only. No markdown:
         return {"activity_score": contributor.commits, "tier": "active", "summary": "", "interesting": True}
 
     def score_contributors_bulk(self, contributors: list, keyword: str) -> list[dict]:
-        """Score ALL contributors in one Claude call. Returns list aligned with input order.
-
-        Falls back to per-contributor OpenAI scoring if Claude isn't available.
-        """
-        if not USE_CLAUDE or not contributors:
-            return [self.score_contributor(c, keyword) for c in contributors]
-
-        # Build compact JSON array of contributor profiles
-        profiles = [
-            {
-                "username": c.username,
-                "name": c.name,
-                "company": c.company,
-                "location": c.location,
-                "bio": (c.bio or "")[:200],
-                "pinned_repos": c.pinned_repos[:5],
-                "orgs": c.orgs[:5],
-                "commits": c.commits,
-                "repos_contributed": c.repos_contributed[:5],
-            }
-            for c in contributors
-        ]
-        prompt = f"""You are scoring {len(profiles)} GitHub contributors in the developer / {keyword} space.
-
-For EACH contributor below, return a score object. Output a single JSON array, same length and order as input.
-
-Input contributors:
-{json.dumps(profiles, indent=2)}
-
-Output schema for each contributor:
-{{
-  "username": "<copy from input>",
-  "activity_score": <0-100, based on commits + repos + engagement>,
-  "tier": "core" | "active" | "emerging",
-  "summary": "<1 sentence: who they are and what they build>",
-  "focus_areas": ["area1", "area2"],
-  "interesting": true | false
-}}
-
-Return ONLY the JSON array. No markdown, no preamble."""
-        try:
-            client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-            msg = client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=8000,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            txt = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text").strip()
-            start = txt.find("[")
-            end = txt.rfind("]") + 1
-            if start < 0 or end <= start:
-                raise ValueError("no JSON array in response")
-            scored = json.loads(txt[start:end])
-            # Re-align to input order by username
-            score_map = {s.get("username", ""): s for s in scored if isinstance(s, dict)}
-            results = []
-            for c in contributors:
-                s = score_map.get(c.username)
-                if s:
-                    results.append(s)
-                else:
-                    # Missing entry → safe default
-                    results.append({
-                        "username": c.username,
-                        "activity_score": c.commits,
-                        "tier": "active",
-                        "summary": "",
-                        "focus_areas": [],
-                        "interesting": True,
-                    })
-            return results
-        except Exception as e:
-            print(f"  ⚠️  Claude bulk score failed ({e}); falling back to per-contributor OpenAI")
-            return [self.score_contributor(c, keyword) for c in contributors]
+        """Score contributors with per-contributor OpenAI (gpt-4o-mini) scoring."""
+        return [self.score_contributor(c, keyword) for c in contributors]
 
     def build_report(self, keyword: str, repos: list[Repo], contributors: list[Contributor], analyses: list[dict]) -> dict:
         """Build the final Toplyne report."""
@@ -878,8 +799,8 @@ class GitHubRadarAgent:
             )
             contributors.append(c)
 
-        # Step 3: analyze with Claude (bulk, 1 call) — fallback to OpenAI per-contributor
-        model_label = "claude-haiku-4-5 (bulk)" if USE_CLAUDE else "gpt-4o-mini"
+        # Step 3: analyze contributors with OpenAI (gpt-4o-mini)
+        model_label = "gpt-4o-mini"
         emit("agent", f"🧠 Analysing {len(contributors)} contributors with {model_label}...")
         emit("analyzing", f"🤖 Scoring {len(contributors)} contributors in a single call…")
         analyses = self.analyzer.score_contributors_bulk(contributors, self.keyword)
@@ -1054,7 +975,7 @@ class GitHubRadarAgent:
             await self.scanner.stop()
             emit("agent", "🛑 Browser session closed")
 
-            model_label = "claude-haiku-4-5 (bulk)" if USE_CLAUDE else "gpt-4o-mini"
+            model_label = "gpt-4o-mini"
             emit("agent", f"🧠 Analysing {len(top_to_profile)} contributors with {model_label}...")
             emit("analyzing", f"🤖 Scoring {len(top_to_profile)} contributors in a single call…")
             bulk_results = self.analyzer.score_contributors_bulk(top_to_profile, self.keyword)
