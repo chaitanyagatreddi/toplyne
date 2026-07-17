@@ -18,7 +18,5 @@ services:
         sync: false
       - key: BROWSERBASE_PROJECT_ID
         sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
       - key: GITHUB_TOKEN
         sync: false
