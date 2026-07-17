@@ -1,4 +1,4 @@
-# Task: Build an Animated React UI for GitHub Radar
+# Task: Build an Animated React UI for Toplyne
 
 **Role:** Full-stack Developer (Frontend-focused)
 **Experience level:** Fresh graduate / 0 years — this task is written to be beginner-friendly. Take your time, ask questions, and read the linked docs.
@@ -8,7 +8,7 @@
 
 ## Context
 
-GitHub Radar scans GitHub for cybersecurity tool repos, maps top contributors, and scores them with AI. Today the UI is server-rendered from a Python + Flask backend (`app.py`) that streams live progress over Server-Sent Events (SSE).
+Toplyne scans GitHub for cybersecurity tool repos, maps top contributors, and scores them with AI. Today the UI is server-rendered from a Python + Flask backend (`app.py`) that streams live progress over Server-Sent Events (SSE).
 
 Your job is to build a **new React frontend** that talks to the existing backend, with smooth, tasteful animations powered by **[motion.dev](https://motion.dev)** (the Motion library, formerly Framer Motion).
 

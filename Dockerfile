@@ -17,4 +17,5 @@ COPY . .
 
 EXPOSE 7860
 
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:7860", "--timeout", "180", "--workers", "2"]
+# Shell form so $PORT (set by Render) expands; falls back to 7860 locally / on HF.
+CMD gunicorn app:app --bind 0.0.0.0:${PORT:-7860} --timeout 180 --workers 2

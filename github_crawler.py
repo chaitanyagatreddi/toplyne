@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GitHub Radar — Dev Contributor Crawler
+Toplyne — Dev Contributor Crawler
 =================================================
 Uses Browserbase + Playwright to crawl GitHub for developer repos
 and map who is contributing to what.
@@ -686,7 +686,7 @@ Return ONLY the JSON array. No markdown, no preamble."""
             return [self.score_contributor(c, keyword) for c in contributors]
 
     def build_report(self, keyword: str, repos: list[Repo], contributors: list[Contributor], analyses: list[dict]) -> dict:
-        """Build the final GitHub radar report."""
+        """Build the final Toplyne report."""
         # Deduplicate contributors by username, merge repos_contributed
         contrib_map: dict[str, Contributor] = {}
         for c in contributors:
@@ -1101,7 +1101,7 @@ class GitHubRadarAgent:
             emit("agent", "📊 Building report...")
             report = self.analyzer.build_report(self.keyword, repos, all_contributors, all_analyses)
             report["company_signals"] = company_signals
-            emit("complete", "✅ GitHub Radar scan complete!", report)
+            emit("complete", "✅ Toplyne scan complete!", report)
             return report
 
         except Exception as e:
@@ -1132,7 +1132,7 @@ class GitHubRadarAgent:
             else:
                 print(f"  [{type_}] {msg}")
 
-        emit("agent", "🚀 GitHub Radar starting...", {"keyword": self.keyword})
+        emit("agent", "🚀 Toplyne starting...", {"keyword": self.keyword})
 
         try:
             # Step 1: Search repos by keyword
@@ -1170,7 +1170,7 @@ class GitHubRadarAgent:
 
 async def main():
     import argparse
-    parser = argparse.ArgumentParser(description="GitHub Radar — Dev Contributor Crawler")
+    parser = argparse.ArgumentParser(description="Toplyne — Dev Contributor Crawler")
     parser.add_argument("--keyword", default="vulnerability scanner", help="Search keyword")
     parser.add_argument("--repos", type=int, default=3, help="Max repos to scan")
     parser.add_argument("--contributors", type=int, default=6, help="Max contributors per repo")
@@ -1188,7 +1188,7 @@ async def main():
     report = await agent.run()
 
     print("\n" + "="*60)
-    print(f"  🛡️  GITHUB RADAR — {report.get('keyword', '').upper()}")
+    print(f"  🛡️  TOPLYNE — {report.get('keyword', '').upper()}")
     print("="*60)
     print(f"  Repos scanned: {report.get('repos_scanned', 0)}")
     print(f"  Contributors: {report.get('contributors_found', 0)}")

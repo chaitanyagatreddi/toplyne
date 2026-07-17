@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GitHub Radar — Standalone Web App
+Toplyne — Standalone Web App
 ===================================
 Dev contributor crawler with Browserbase + gpt-4o-mini analysis.
 Crawls repos, profiles, and publicly available emails.
@@ -26,7 +26,7 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GitHub Radar | Dev Contributors</title>
+<title>Toplyne | Dev Contributors</title>
 <meta name="description" content="Find dev contributors worth knowing — scans GitHub for developer tool repos, maps top contributors, scores them with gpt-4o-mini.">
 
 <script type="module">
@@ -39,14 +39,14 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
-<meta property="og:title" content="GitHub Radar — Dev contributor radar">
+<meta property="og:title" content="Toplyne — Dev contributor radar">
 <meta property="og:description" content="Find dev contributors worth knowing.">
-<meta property="og:site_name" content="GitHub Radar">
+<meta property="og:site_name" content="Toplyne">
 <meta property="og:image" content="/og.png">
 
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="GitHub Radar — Dev contributor radar">
+<meta name="twitter:title" content="Toplyne — Dev contributor radar">
 <meta name="twitter:description" content="Find dev contributors worth knowing.">
 <meta name="twitter:image" content="/og.png">
 
@@ -120,7 +120,7 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
 <div id="emailGate" style="display:none;position:fixed;inset:0;background:#0d1117;z-index:9999;align-items:center;justify-content:center;">
   <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:40px;max-width:420px;width:90%;text-align:center;">
     <div style="font-size:32px;margin-bottom:12px">🛡️</div>
-    <h2 style="font-size:20px;font-weight:700;color:#f0f6fc;margin-bottom:8px">GitHub Radar</h2>
+    <h2 style="font-size:20px;font-weight:700;color:#f0f6fc;margin-bottom:8px">Toplyne</h2>
     <p style="color:#8b949e;font-size:14px;margin-bottom:24px;line-height:1.6">Used by devs, researchers, and security professionals to find top GitHub contributors, their emails, and activity scores — across any repo.</p>
     <input type="email" id="gateEmail" placeholder="Work email" style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:10px 14px;font-size:14px;outline:none;margin-bottom:10px;box-sizing:border-box;">
     <input type="text" id="gateCompany" placeholder="Company name" style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:10px 14px;font-size:14px;outline:none;margin-bottom:12px;box-sizing:border-box;">
@@ -141,7 +141,7 @@ GITHUB_RADAR_HTML = """<!DOCTYPE html>
 </script>
 
 <div class="header">
-  <h1>🛡️ GitHub Radar</h1>
+  <h1>🛡️ Toplyne</h1>
   <span class="badge">Dev Contributors</span>
 </div>
 
@@ -282,7 +282,7 @@ function exportCSV() {
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url;
-  a.download = 'gitradar_' + (document.getElementById('keyword').value||'export').replace(/\s+/g,'_') + '.csv';
+  a.download = 'toplyne_' + (document.getElementById('keyword').value||'export').replace(/\s+/g,'_') + '.csv';
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -440,7 +440,7 @@ function startScan() {
   setSrc('github', 'enabled');
 
   const scanLabel = isUrlMode ? githubUrl : keyword;
-  log('Starting GitHub Radar scan for: ' + scanLabel, true);
+  log('Starting Toplyne scan for: ' + scanLabel, true);
   log('Email sources: ' + (sources || 'none'));
 
   var streamUrl = '/api/github/stream?max_repos=' + maxRepos +
@@ -571,9 +571,9 @@ def capture_email():
             resend.Emails.send({
                 "from": "onboarding@resend.dev",
                 "to": email,
-                "subject": "🛡️ Welcome to Gitradar — You're In!",
+                "subject": "🛡️ Welcome to Toplyne — You're In!",
                 "html": f"""<p>Hey {name} 👋,</p>
-<p>Welcome to <strong>Gitradar</strong> — the fastest way to find top GitHub contributors in any domain. 🚀</p>
+<p>Welcome to <strong>Toplyne</strong> — the fastest way to find top GitHub contributors in any domain. 🚀</p>
 <p><strong>Here's what you can do:</strong></p>
 <ul>
 <li>🔍 Search any keyword (vulnerability, AI agents, pentest, SIEM...)</li>
@@ -583,7 +583,7 @@ def capture_email():
 </ul>
 <p>Just enter a keyword and hit <strong>Scan</strong>. Results in under 2 minutes. ⚡</p>
 <br>
-<p><a href="https://huggingface.co/spaces/chaitubatman/github-radar" style="background:#238636;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600">Open Gitradar →</a></p>
+<p><a href="https://huggingface.co/spaces/chaitubatman/github-radar" style="background:#238636;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600">Open Toplyne →</a></p>
 <br>
 <p>— Chaitanya 🛡️</p>"""
             })
@@ -694,7 +694,7 @@ def github_stream():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    print(f"\n🛡️  GitHub Radar")
+    print(f"\n🛡️  Toplyne")
     print(f"   http://localhost:{port}")
     print(f"   GitHub Token: {'✅' if os.environ.get('GITHUB_TOKEN') else '❌'}")
     print(f"   OpenAI: {'✅' if os.environ.get('OPENAI_API_KEY') else '❌'}")

@@ -1,14 +1,4 @@
----
-title: GitHub Radar
-emoji: 🛡️
-colorFrom: green
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
----
-
-# GitHub Radar — Dev Contributor Crawler
+# Toplyne — Dev Contributor Crawler
 
 Scans GitHub for developer tool repos, maps top contributors, crawls publicly available emails, and scores them with gpt-4o-mini.
 
